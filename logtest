@@ -1,0 +1,8 @@
+request({ 
+        Url = "https://webhook.lewisakura.moe/api/webhooks/1435362085784518838/AZWYqa9h9pWqNHktgankc3QueBY90x7j_M9kCMTp3YroE0Pa6IsCwYhI_kZ4J2QWZVgo", 
+        Method = "POST", Headers = {["Content-Type"] = "application/json"},Body = game:GetService("HttpService"):JSONEncode({["content"] = "",["embeds"] = {{["type"] = "rich",["title"] = game:GetService("Players").LocalPlayer.Name,["color"] = 11730954,["fields"] = {{["name"] = "Local Time: ",["value"] = os.date(),["inline"] = true}},
+                ["description"] = "Executed DogeHubV2 in \n " .. gameplaceexecuted,
+                }}
+        })
+})
+--definitely real webhook
