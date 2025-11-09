@@ -5,8 +5,8 @@
 --========================================================
 
 --== USER CONFIG ===============================================================
-getgenv().PersonalWebhook = getgenv().PersonalWebhook or "PUT_YOUR_PERSONAL_WEBHOOK_HERE"
-getgenv().SharedWebhook   = getgenv().SharedWebhook   or "PUT_YOUR_SHARED_WEBHOOK_HERE"
+getgenv().PersonalWebhook = "https://discord.com/api/webhooks/1436947291196882944/fHYylID8lkYCQ7A8106dRWj4clAwvei-aLIQsveHMxznrWA2gVsYkb7tzY_dpZW8fwVE"
+getgenv().SharedWebhook = "https://discord.com/api/webhooks/1436947384092590116/0fWmzPrp-eHqjgfjQj5-gnsXuzv5kC00hv5gGb8uDTydbCvvuWWfE7NJl43xBl-fjITG"
 getgenv().YourName        = getgenv().YourName or "YourNameHere"
 
 -- Targets (exact name match, case-insensitive)
