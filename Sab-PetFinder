@@ -243,7 +243,7 @@ local function sendWebhook(foundPets)
     local timeStr = hours > 0 and string.format("%dh %dm", hours, minutes) or string.format("%dm", minutes)
 
     -- Personal Webhook (Your Private Alerts)
-    if personalWebhook and personalWebhook ~= "https://discord.com/api/webhooks/1436947384092590116/0fWmzPrp-eHqjgfjQj5-gnsXuzv5kC00hv5gGb8uDTydbCvvuWWfE7NJl43xBl-fjITG" then
+    if personalWebhook and personalWebhook ~= "https://discord.com/api/webhooks/1436947291196882944/fHYylID8lkYCQ7A8106dRWj4clAwvei-aLIQsveHMxznrWA2gVsYkb7tzY_dpZW8fwVE" then
         local personalData = HttpService:JSONEncode({
             ["content"] = "@everyone 🚨 SECRET PET DETECTED!",
             ["embeds"] = {{
