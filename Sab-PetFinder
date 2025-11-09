@@ -1,5 +1,4 @@
 
---== USER CONFIG ===============================================================
 getgenv().PersonalWebhook = "https://discord.com/api/webhooks/1436947291196882944/fHYylID8lkYCQ7A8106dRWj4clAwvei-aLIQsveHMxznrWA2gVsYkb7tzY_dpZW8fwVE"
 getgenv().SharedWebhook = "https://discord.com/api/webhooks/1436947384092590116/0fWmzPrp-eHqjgfjQj5-gnsXuzv5kC00hv5gGb8uDTydbCvvuWWfE7NJl43xBl-fjITG"
 getgenv().YourName        = getgenv().YourName or "YourNameHere"
@@ -365,9 +364,16 @@ workspace.DescendantAdded:Connect(function(obj)
   end
 end)
 
--- ===== Banner & first sweep =====
-print(("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🔍 Pet Finder - Shared Discovery Edition\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 Username: %s\n📊 Total scans: %d\n🎯 Your finds: %d\n🤝 Group sharing: %s\n⏱️ Session runtime: %d minutes\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-  :format(yourName, getgenv().TotalScans, getgenv().TotalFinds, (shareDiscoveries and "ENABLED" or "DISABLED"), math.floor((os.time()-getgenv().StartTime)/60)))
+--== BOOT ======================================================================
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🔍 Pet Finder - Shared Discovery Edition")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("👤 Username:", yourName)
+print("📊 Total scans:", getgenv().TotalScans)
+print("🎯 Your finds:", getgenv().TotalFinds)
+print("🤝 Group sharing:", shareDiscoveries and "ENABLED" or "DISABLED")
+print("⏱️ Session runtime:", math.floor((os.time() - getgenv().StartTime)/60) .. " minutes")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 task.wait(6)
 getgenv().TotalScans += 1
