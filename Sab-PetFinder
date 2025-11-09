@@ -98,6 +98,7 @@ repeat
     task.wait()
 until LocalPlayer
 
+
 --// User Configuration
 local personalWebhook = getgenv().PersonalWebhook
 local sharedWebhook = getgenv().SharedWebhook
@@ -116,6 +117,7 @@ if not getgenv().TotalScans then
     getgenv().GroupFinds = 0 -- Tracks finds from other group members
     getgenv().StartTime = os.time()
 end
+
 
 --// Visited Job Tracking
 local visitedJobIds = {[game.JobId] = true}
@@ -156,6 +158,9 @@ local function queueScript()
     end
 end
 
+local MAX_FETCH_FAILS = 4       -- how many fetch errors before forcing a random hop
+local MAX_PAGE_TRIES  = 3       -- how many API pages to scan per hop attempt
+
 --// Teleport Fail Handling
 TeleportService.TeleportInitFailed:Connect(function(_, result)
     teleportFails += 1
@@ -182,25 +187,59 @@ end)
 
 --// ESP Function
 local function addESP(targetModel)
-    if targetModel:FindFirstChild("PetESP") then return end
-    local Billboard = Instance.new("BillboardGui")
-    Billboard.Name = "PetESP"
-    Billboard.Adornee = targetModel
-    Billboard.Size = UDim2.new(0, 100, 0, 30)
-    Billboard.StudsOffset = Vector3.new(0, 3, 0)
-    Billboard.AlwaysOnTop = true
-    Billboard.Parent = targetModel
+    -- prevent duplicates
+    if targetModel:FindFirstChild("PetESP", true) or targetModel:FindFirstChild("PetHighlight", true) then
+        return
+    end
 
-    local Label = Instance.new("TextLabel")
-    Label.Size = UDim2.new(1, 0, 1, 0)
-    Label.BackgroundTransparency = 1
-    Label.Text = "🎯 Target Pet"
-    Label.TextColor3 = Color3.fromRGB(255, 0, 0)
-    Label.TextStrokeTransparency = 0.5
-    Label.Font = Enum.Font.SourceSansBold
-    Label.TextScaled = true
-    Label.Parent = Billboard
+    -- pick a BasePart to adorn
+    local part = targetModel.PrimaryPart or targetModel:FindFirstChildWhichIsA("BasePart", true)
+    if not part then
+        warn("ESP: no BasePart for", targetModel:GetFullName())
+        return
+    end
+
+    -- big on-screen label
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "PetESP"
+    bb.Adornee = part
+    bb.AlwaysOnTop = true
+    bb.Size = UDim2.new(0, 220, 0, 60)      -- ⬅ bigger
+    bb.StudsOffset = Vector3.new(0, 6, 0)   -- ⬅ float higher
+    bb.MaxDistance = 500                    -- ⬅ visible from far away
+    bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    bb.Parent = part
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 0.2
+    label.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    label.Text = "🎯 TARGET: " .. targetModel.Name
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextStrokeTransparency = 0.15
+    label.TextScaled = true
+    label.Font = Enum.Font.GothamBlack
+    label.Parent = bb
+
+    -- add a fat border
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2.5
+    stroke.Color = Color3.fromRGB(255, 0, 0)
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = label
+
+    -- world-space halo on the model
+    local hl = Instance.new("Highlight")
+    hl.Name = "PetHighlight"
+    hl.Adornee = targetModel
+    hl.FillColor = Color3.fromRGB(255, 60, 60)
+    hl.FillTransparency = 0.75
+    hl.OutlineColor = Color3.fromRGB(255, 0, 0)
+    hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = targetModel
 end
+
 
 --// Send to Webhook Function
 local function sendToWebhook(webhookUrl, jsonData)
@@ -420,13 +459,6 @@ function serverHop()
 end
 
 
-    warn("❌ No valid servers found after multiple attempts.")
-    warn("💡 Possible reasons:")
-    warn("   - All servers have <" .. minPlayers .. " or >" .. maxPlayers .. " players")
-    warn("   - Roblox API rate limit (happens frequently)")
-    warn("   - Already visited most available servers")
-    warn("🔄 Waiting 10 seconds before random teleport to avoid rate limits...")
-    task.wait(10)
 
 --// Live Detection
 workspace.DescendantAdded:Connect(function(obj)
