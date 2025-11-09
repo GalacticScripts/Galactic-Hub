@@ -1,5 +1,12 @@
 --// Configuration - CHANGE THESE VALUES
-getgenv().webhook = "https://discord.com/api/webhooks/1435764712725024799/OUj-TJviyHqusZhZHgzUx92vQx7S7Nv9so9nfjk8BfMfNcwdK7w-wGj1I3puDpY9gka1"
+--// Personal Webhook (only YOU get notified)
+getgenv().PersonalWebhook = "https://discord.com/api/webhooks/1436947291196882944/fHYylID8lkYCQ7A8106dRWj4clAwvei-aLIQsveHMxznrWA2gVsYkb7tzY_dpZW8fwVE"
+
+--// Shared Webhook (ALL USERS get notified - share this with your group!)
+getgenv().SharedWebhook = "https://discord.com/api/webhooks/1436947384092590116/0fWmzPrp-eHqjgfjQj5-gnsXuzv5kC00hv5gGb8uDTydbCvvuWWfE7NJl43xBl-fjITG"
+
+--// Your Display Name (will show who found the pet)
+getgenv().YourName = "YourNameHere"
 
 getgenv().TargetPetNames = {
     "Chillin Chili", 
@@ -75,6 +82,10 @@ getgenv().ScriptURL = "https://raw.githubusercontent.com/GalacticScripts/Galacti
 getgenv().MinPlayers = 10 -- Only join servers with at least this many players
 getgenv().MaxPlayers = 25 -- Maximum players in server (leave room to join)
 
+--// SHARED DISCOVERY SETTINGS
+getgenv().ShareDiscoveries = true -- Set to false if you don't want to share with the group
+getgenv().NotifyOnGroupFinds = true -- Get notified when others in your group find pets
+
 --// Services
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
@@ -88,14 +99,21 @@ repeat
 until LocalPlayer
 
 --// User Configuration
-local webhook = getgenv().webhook
+local personalWebhook = getgenv().PersonalWebhook
+local sharedWebhook = getgenv().SharedWebhook
+local yourName = getgenv().YourName or LocalPlayer.Name
 local targetPets = getgenv().TargetPetNames
 local scriptURL = getgenv().ScriptURL
+local minPlayers = getgenv().MinPlayers or 10
+local maxPlayers = getgenv().MaxPlayers or 25
+local shareDiscoveries = getgenv().ShareDiscoveries
+local notifyOnGroupFinds = getgenv().NotifyOnGroupFinds
 
 --// Global Scan Counter (persists across server hops)
 if not getgenv().TotalScans then
     getgenv().TotalScans = 0
     getgenv().TotalFinds = 0
+    getgenv().GroupFinds = 0 -- Tracks finds from other group members
     getgenv().StartTime = os.time()
 end
 
@@ -184,13 +202,25 @@ local function addESP(targetModel)
     Label.Parent = Billboard
 end
 
---// Webhook Function
-local function sendWebhook(foundPets)
-    if not webhook or webhook == "https://discord.com/api/webhooks/1435764712725024799/OUj-TJviyHqusZhZHgzUx92vQx7S7Nv9so9nfjk8BfMfNcwdK7w-wGj1I3puDpY9gka1" then
-        warn("⚠️ Webhook not configured, skipping notification.")
-        return
+--// Send to Webhook Function
+local function sendToWebhook(webhookUrl, jsonData)
+    local req = http_request or request or syn and syn.request
+    if req then
+        local success, err = pcall(function()
+            req({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = jsonData
+            })
+        end)
+        return success, err
     end
+    return false, "Executor doesn't support HTTP requests"
+end
 
+--// Webhook Function (Dual Webhook System)
+local function sendWebhook(foundPets)
     getgenv().TotalFinds += 1
 
     local petCounts = {}
@@ -205,50 +235,70 @@ local function sendWebhook(foundPets)
         table.insert(formattedPets, count > 1 and petName .. " x" .. count or petName)
     end
 
-    local serverLink = "[Join](https://fern.wtf/joiner?placeId=" .. game.PlaceId .. "&gameInstanceId=" .. game.JobId .. ")"
+    local serverLink = "[Join Server](https://fern.wtf/joiner?placeId=" .. game.PlaceId .. "&gameInstanceId=" .. game.JobId .. ")"
     
     local runTime = os.time() - getgenv().StartTime
     local hours = math.floor(runTime / 3600)
     local minutes = math.floor((runTime % 3600) / 60)
     local timeStr = hours > 0 and string.format("%dh %dm", hours, minutes) or string.format("%dm", minutes)
 
-    local jsonData = HttpService:JSONEncode({
-        ["content"] = "🚨 SECRET PET DETECTED!",
-        ["embeds"] = {{
-            ["title"] = #foundPets .. " Secret Pet(s) Found!",
-            ["description"] = "Brainrot-worthy pet detected in the server!",
-            ["fields"] = {
-                { ["name"] = "📍 Location Info", ["value"] = "`game:GetService('TeleportService'):TeleportToPlaceInstance(" .. game.PlaceId .. ", '" .. game.JobId .. "')`" },
-                { ["name"] = "👥 Players", ["value"] = tostring(#Players:GetPlayers()) },
-                { ["name"] = "🐾 Pets Found", ["value"] = table.concat(formattedPets, "\n") },
-                { ["name"] = "🔗 Server Link", ["value"] = serverLink },
-                { ["name"] = "📊 Stats", ["value"] = "Scans: " .. getgenv().TotalScans .. " | Finds: " .. getgenv().TotalFinds .. " | Runtime: " .. timeStr },
-                { ["name"] = "⏰ Time", ["value"] = os.date("%m/%d/%y, %I:%M %p") }
-            },
-            ["color"] = 0xFF00FF,
-            ["footer"] = {
-                ["text"] = "Place ID: " .. game.PlaceId .. " • " .. game.JobId
-            }
-        }}
-    })
-
-    local req = http_request or request or syn and syn.request
-    if req then
-        local success, err = pcall(function()
-            req({
-                Url = webhook,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = jsonData
-            })
-        end)
+    -- Personal Webhook (Your Private Alerts)
+    if personalWebhook and personalWebhook ~= "https://discord.com/api/webhooks/1436947291196882944/fHYylID8lkYCQ7A8106dRWj4clAwvei-aLIQsveHMxznrWA2gVsYkb7tzY_dpZW8fwVE" then
+        local personalData = HttpService:JSONEncode({
+            ["content"] = "@everyone 🚨 SECRET PET DETECTED!",
+            ["embeds"] = {{
+                ["title"] = "🎯 " .. #foundPets .. " Secret Pet(s) Found!",
+                ["description"] = "**YOU found secret pets in this server!**",
+                ["fields"] = {
+                    { ["name"] = "📍 Location Info", ["value"] = "`game:GetService('TeleportService'):TeleportToPlaceInstance(" .. game.PlaceId .. ", '" .. game.JobId .. "')`" },
+                    { ["name"] = "👥 Players", ["value"] = tostring(#Players:GetPlayers()) },
+                    { ["name"] = "🐾 Pets Found", ["value"] = table.concat(formattedPets, "\n") },
+                    { ["name"] = "🔗 Quick Join", ["value"] = serverLink },
+                    { ["name"] = "📊 Your Stats", ["value"] = "Scans: " .. getgenv().TotalScans .. " | Finds: " .. getgenv().TotalFinds .. " | Runtime: " .. timeStr },
+                    { ["name"] = "⏰ Time", ["value"] = os.date("%m/%d/%y, %I:%M %p") }
+                },
+                ["color"] = 0x00FF00,
+                ["footer"] = {
+                    ["text"] = "Place ID: " .. game.PlaceId .. " • Found by YOU"
+                },
+                ["thumbnail"] = {
+                    ["url"] = "https://cdn.discordapp.com/emojis/1234567890123456789.png"
+                }
+            }}
+        })
+        
+        local success = sendToWebhook(personalWebhook, personalData)
         if success then
-            print("✅ Webhook sent. Total finds:", getgenv().TotalFinds)
-        else
-            warn("❌ Failed to send webhook:", err)
+            print("✅ Personal webhook sent!")
         end
-    else
-        warn("❌ Executor doesn't support HTTP requests.")
+    end
+
+    -- Shared Webhook (Group Discovery System)
+    if shareDiscoveries and sharedWebhook and sharedWebhook ~= "https://discord.com/api/webhooks/1436947384092590116/0fWmzPrp-eHqjgfjQj5-gnsXuzv5kC00hv5gGb8uDTydbCvvuWWfE7NJl43xBl-fjITG" then
+        local sharedData = HttpService:JSONEncode({
+            ["content"] = "🔔 Group Discovery Alert!",
+            ["embeds"] = {{
+                ["title"] = "🧠 " .. #foundPets .. " Secret Pet(s) Found!",
+                ["description"] = "**" .. yourName .. "** discovered secret pets!",
+                ["fields"] = {
+                    { ["name"] = "📍 Location Info", ["value"] = "`game:GetService('TeleportService'):TeleportToPlaceInstance(" .. game.PlaceId .. ", '" .. game.JobId .. "')`" },
+                    { ["name"] = "👥 Players in Server", ["value"] = tostring(#Players:GetPlayers()), ["inline"] = true },
+                    { ["name"] = "🔍 Found By", ["value"] = yourName, ["inline"] = true },
+                    { ["name"] = "🐾 Pets Found", ["value"] = table.concat(formattedPets, "\n") },
+                    { ["name"] = "🔗 Quick Join", ["value"] = serverLink },
+                    { ["name"] = "⏰ Time", ["value"] = os.date("%m/%d/%y, %I:%M %p") }
+                },
+                ["color"] = 0xFF00FF,
+                ["footer"] = {
+                    ["text"] = "Shared Discovery • Place ID: " .. game.PlaceId
+                }
+            }}
+        })
+        
+        local success = sendToWebhook(sharedWebhook, sharedData)
+        if success then
+            print("✅ Shared discovery sent to group!")
+        end
     end
 
     -- Wait 5 seconds before hopping to give time to join
@@ -314,16 +364,25 @@ function serverHop()
         if success and response and response.data then
             local servers = {}
             for _, server in ipairs(response.data) do
-                if tonumber(server.playing or 0) < tonumber(server.maxPlayers or 1)
+                local playerCount = tonumber(server.playing or 0)
+                local maxServerPlayers = tonumber(server.maxPlayers or 1)
+                
+                -- Filter servers based on player count
+                if playerCount >= minPlayers 
+                    and playerCount <= maxPlayers
+                    and playerCount < maxServerPlayers
                     and server.id ~= JobId
                     and not visitedJobIds[server.id] then
-                        table.insert(servers, server.id)
+                        table.insert(servers, {id = server.id, players = playerCount})
                 end
             end
 
             if #servers > 0 then
-                local picked = servers[math.random(1, #servers)]
-                print("✅ Hopping to server:", picked)
+                -- Sort by player count (descending) to prioritize fuller servers
+                table.sort(servers, function(a, b) return a.players > b.players end)
+                
+                local picked = servers[1].id
+                print("✅ Hopping to server with", servers[1].players, "players:", picked)
                 teleportFails = 0
                 
                 -- Queue script for next server
@@ -374,10 +433,15 @@ workspace.DescendantAdded:Connect(function(obj)
 end)
 
 --// Start
-print("🔍 Starting Pet Finder...")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("🔍 Pet Finder - Shared Discovery Edition")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("👤 Username:", yourName)
 print("📊 Total scans:", getgenv().TotalScans)
-print("🎯 Total finds:", getgenv().TotalFinds)
+print("🎯 Your finds:", getgenv().TotalFinds)
+print("🤝 Group sharing:", shareDiscoveries and "ENABLED" or "DISABLED")
 print("⏱️ Session runtime:", math.floor((os.time() - getgenv().StartTime) / 60) .. " minutes")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 task.wait(6)
 getgenv().TotalScans += 1
