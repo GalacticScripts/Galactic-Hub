@@ -340,11 +340,12 @@ end
 --// Server Hop Function
 function serverHop()
     if stopHopping then return end
-    task.wait(1.5)
 
-    local cursor = nil
     local PlaceId, JobId = game.PlaceId, game.JobId
+    local fetchFails = 0
+    local backoff = 3.0    -- seconds, increases each fetch fail
     local tries = 0
+    local cursor = nil
 
     hops += 1
     if hops >= maxHopsBeforeReset then
@@ -353,61 +354,71 @@ function serverHop()
         print("♻️ Resetting visited JobIds.")
     end
 
-    while tries < 5 do
-        local url = "https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-        if cursor then url = url .. "&cursor=" .. cursor end
+    local function forceRandomHop()
+        warn("⚠️ Forcing random hop (fallback)…")
+        queueScript()
+        TeleportService:Teleport(PlaceId) -- matchmaking to any public server
+    end
 
-        local success, response = pcall(function()
-            local raw = game:HttpGet(url)
-            task.wait(0.3) -- Rate limit protection
+    while tries < MAX_PAGE_TRIES do
+        local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(PlaceId)
+        if cursor then url ..= "&cursor=" .. cursor end
+
+        local ok, decoded = pcall(function()
+            -- using HttpService:GetAsync avoids some caching quirks; decode after
+            local raw = HttpService:GetAsync(url, true)
             return HttpService:JSONDecode(raw)
         end)
 
-        if success and response and response.data then
+        if not ok or not decoded or not decoded.data then
+            fetchFails += 1
+            warn(("⚠️ Failed to fetch server list. Retrying in %.0f seconds..."):format(backoff))
+            task.wait(backoff)
+            backoff = math.min(backoff + 3, 15) -- gentle linear backoff, capped
+            if fetchFails >= MAX_FETCH_FAILS then
+                return forceRandomHop()
+            end
+            -- try again without advancing page counter
+        else
+            -- build candidate list
             local servers = {}
-            for _, server in ipairs(response.data) do
-                local playerCount = tonumber(server.playing or 0)
-                local maxServerPlayers = tonumber(server.maxPlayers or 1)
-                
-                -- Filter servers based on player count
-                if playerCount >= minPlayers 
-                    and playerCount <= maxPlayers
-                    and playerCount < maxServerPlayers
-                    and server.id ~= JobId
-                    and not visitedJobIds[server.id] then
-                        table.insert(servers, {id = server.id, players = playerCount})
+            for _, s in ipairs(decoded.data) do
+                local playing = tonumber(s.playing or 0) or 0
+                local maxp    = tonumber(s.maxPlayers or 1) or 1
+                if playing >= minPlayers
+                   and playing <= maxPlayers
+                   and playing < maxp
+                   and s.id ~= JobId
+                   and not visitedJobIds[s.id] then
+                    table.insert(servers, { id = s.id, players = playing })
                 end
             end
 
             if #servers > 0 then
-                -- Sort by player count (descending) to prioritize fuller servers
-                table.sort(servers, function(a, b) return a.players > b.players end)
-                
-                local picked = servers[1].id
-                print("✅ Hopping to server with", servers[1].players, "players:", picked)
+                table.sort(servers, function(a,b) return a.players > b.players end)
+                local pick = servers[1].id
+                visitedJobIds[pick] = true
+                print(("✅ Hopping to server with %d players: %s"):format(servers[1].players, pick))
                 teleportFails = 0
-                
-                -- Queue script for next server
                 queueScript()
-                
-                TeleportService:TeleportToPlaceInstance(PlaceId, picked)
+                TeleportService:TeleportToPlaceInstance(PlaceId, pick)
                 return
             end
 
-            cursor = response.nextPageCursor
+            cursor = decoded.nextPageCursor
             if not cursor then
                 tries += 1
-                cursor = nil
-                task.wait(1.5) -- Longer wait between page attempts
+                task.wait(1.5)
             else
-                task.wait(0.3) -- Small delay when getting next page
+                task.wait(0.4)
             end
-        else
-            warn("⚠️ Failed to fetch server list. Retrying in 3 seconds...")
-            tries += 1
-            task.wait(3)
         end
     end
+
+    -- scanned a few pages and/or couldn’t find a candidate — force random hop
+    forceRandomHop()
+end
+
 
     warn("❌ No valid servers found after multiple attempts.")
     warn("💡 Possible reasons:")
@@ -416,12 +427,6 @@ function serverHop()
     warn("   - Already visited most available servers")
     warn("🔄 Waiting 10 seconds before random teleport to avoid rate limits...")
     task.wait(10)
-    
-    -- Queue script before random teleport
-    queueScript()
-    
-    TeleportService:Teleport(PlaceId)
-end
 
 --// Live Detection
 workspace.DescendantAdded:Connect(function(obj)
