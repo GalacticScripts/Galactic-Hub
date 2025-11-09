@@ -1,0 +1,330 @@
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AshtonHub"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0,60,0,60)
+toggleButton.Position = UDim2.new(0,20,0.5,-30)
+toggleButton.BackgroundColor3 = Color3.fromRGB(135,206,235)
+toggleButton.BackgroundTransparency = 0.2
+toggleButton.Text = "ASHTON"
+toggleButton.Font = Enum.Font.Arcade
+toggleButton.TextSize = 20
+toggleButton.TextColor3 = Color3.fromRGB(255,255,255)
+toggleButton.Active = true
+toggleButton.Draggable = true
+toggleButton.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(1,0)
+uiCorner.Parent = toggleButton
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0,160,0,200)
+mainFrame.Position = UDim2.new(0.5,-80,0.5,-100)
+mainFrame.BackgroundColor3 = Color3.fromRGB(173,216,230)
+mainFrame.BackgroundTransparency = 0.1
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Visible = false
+mainFrame.Parent = screenGui
+
+local frameCorner = Instance.new("UICorner")
+frameCorner.CornerRadius = UDim.new(0,12)
+frameCorner.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1,0,0,25)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Ashton Tools"
+titleLabel.Font = Enum.Font.Arcade
+titleLabel.TextSize = 16
+titleLabel.TextColor3 = Color3.fromRGB(255,255,255)
+titleLabel.Parent = mainFrame
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0,5)
+layout.FillDirection = Enum.FillDirection.Vertical
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+layout.VerticalAlignment = Enum.VerticalAlignment.Top
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = mainFrame
+
+layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    mainFrame.Size = UDim2.new(0,mainFrame.Size.X.Offset,0,layout.AbsoluteContentSize.Y+15)
+end)
+
+local function createButton(name)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(0,140,0,28)
+    button.Text = name
+    button.Font = Enum.Font.Arcade
+    button.TextSize = 16
+    button.TextColor3 = Color3.fromRGB(255,255,255)
+    button.BackgroundColor3 = Color3.fromRGB(70,130,180)
+    button.AutoButtonColor = false
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0,8)
+    corner.Parent = button
+    button.Parent = mainFrame
+    return button
+end
+
+local fpsButton = createButton("Fly")
+local speedButton = createButton("Speed Booster")
+local floorButton = createButton("3rd Floor")
+local desyncBtn = createButton("Desync (Regular)")
+local switchBtn = createButton("Desync Mode")
+switchBtn.BackgroundColor3 = Color3.fromRGB(200,200,0)
+
+local uiVisible = false
+toggleButton.MouseButton1Click:Connect(function()
+    uiVisible = not uiVisible
+    mainFrame.Visible = uiVisible
+end)
+
+do
+    local speedConn
+    local baseSpeed = 30
+    local active = false
+    local function GetCharacter()
+        local Char = player.Character or player.CharacterAdded:Wait()
+        local HRP = Char:WaitForChild("HumanoidRootPart")
+        local Hum = Char:FindFirstChildOfClass("Humanoid")
+        return Char, HRP, Hum
+    end
+
+    local function getMovementInput()
+        local Char, HRP, Hum = GetCharacter()
+        if not Char or not HRP or not Hum then return Vector3.new(0,0,0) end
+        local moveVector = Hum.MoveDirection
+        if moveVector.Magnitude > 0.1 then
+            return Vector3.new(moveVector.X,0,moveVector.Z).Unit
+        end
+        return Vector3.new(0,0,0)
+    end
+
+    local function startSpeedControl()
+        if speedConn then return end
+        speedConn = RunService.Heartbeat:Connect(function()
+            local Char, HRP, Hum = GetCharacter()
+            if not Char or not HRP or not Hum then return end
+            local inputDirection = getMovementInput()
+            if inputDirection.Magnitude > 0 then
+                HRP.AssemblyLinearVelocity = Vector3.new(inputDirection.X*baseSpeed, HRP.AssemblyLinearVelocity.Y, inputDirection.Z*baseSpeed)
+            else
+                HRP.AssemblyLinearVelocity = Vector3.new(0, HRP.AssemblyLinearVelocity.Y, 0)
+            end
+        end)
+    end
+
+    local function stopSpeedControl()
+        if speedConn then speedConn:Disconnect() speedConn=nil end
+        local Char, HRP = GetCharacter()
+        if HRP then HRP.AssemblyLinearVelocity = Vector3.new(0,HRP.AssemblyLinearVelocity.Y,0) end
+    end
+
+    speedButton.MouseButton1Click:Connect(function()
+        active = not active
+        if active then
+            startSpeedControl()
+            speedButton.BackgroundColor3 = Color3.fromRGB(135,206,235)
+        else
+            stopSpeedControl()
+            speedButton.BackgroundColor3 = Color3.fromRGB(70,130,180)
+        end
+    end)
+end
+
+do
+    local guidedOn=false
+    local guidedConn
+    fpsButton.MouseButton1Click:Connect(function()
+        local char = player.Character or player.CharacterAdded:Wait()
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        guidedOn = not guidedOn
+        fpsButton.BackgroundColor3 = guidedOn and Color3.fromRGB(135,206,235) or Color3.fromRGB(70,130,180)
+        if guidedOn then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                guidedConn = RunService.RenderStepped:Connect(function()
+                    if guidedOn and hrp then
+                        hrp.Velocity = workspace.CurrentCamera.CFrame.LookVector*25
+                    end
+                end)
+            end
+        else
+            if guidedConn then guidedConn:Disconnect() guidedConn=nil end
+            if hum then hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        end
+    end)
+end
+
+do
+    local platform, connection
+    local active=false
+    local RISE_SPEED=14
+    local function destroyPlatform()
+        if platform then platform:Destroy() platform=nil end
+        active=false
+        if connection then connection:Disconnect() connection=nil end
+        floorButton.BackgroundColor3 = Color3.fromRGB(70,130,180)
+    end
+
+    local function canRise()
+        if not platform then return false end
+        local origin = platform.Position + Vector3.new(0,platform.Size.Y/2,0)
+        local direction = Vector3.new(0,2,0)
+        local rayParams = RaycastParams.new()
+        rayParams.FilterDescendantsInstances = {platform, player.Character}
+        rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+        return not workspace:Raycast(origin,direction,rayParams)
+    end
+
+    local function setup3rdFloor(character)
+        local root = character:WaitForChild("HumanoidRootPart")
+        floorButton.MouseButton1Click:Connect(function()
+            active = not active
+            if active then
+                platform = Instance.new("Part")
+                platform.Size = Vector3.new(6,0.5,6)
+                platform.Anchored=true
+                platform.CanCollide=true
+                platform.Color = Color3.fromRGB(135,206,235)
+                platform.Position = root.Position - Vector3.new(0, root.Size.Y/2 + platform.Size.Y/2, 0)
+                platform.Parent = workspace
+
+                local isRising=true
+                connection = RunService.Heartbeat:Connect(function(dt)
+                    if platform and active then
+                        local cur = platform.Position
+                        local newXZ = Vector3.new(root.Position.X, cur.Y, root.Position.Z)
+                        if isRising and canRise() then
+                            platform.Position = newXZ + Vector3.new(0, dt*RISE_SPEED,0)
+                        else
+                            isRising=false
+                            platform.Position=newXZ
+                        end
+                    end
+                end)
+                floorButton.BackgroundColor3 = Color3.fromRGB(135,206,235)
+            else
+                destroyPlatform()
+            end
+        end)
+        character:WaitForChild("Humanoid").Died:Connect(destroyPlatform)
+    end
+    if player.Character then setup3rdFloor(player.Character) end
+    player.CharacterAdded:Connect(setup3rdFloor)
+end
+
+local desyncModes = {"Nocloner","Quantum","Desync V2"}
+local currentMode = 1
+local v2Active = false
+local v2Conn
+
+local function setWorldStepMax(value)
+    if setfflag then setfflag("WorldStepMax", tostring(value)) end
+end
+
+local function teleportLeft()
+    local char = player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local hrp = char.HumanoidRootPart
+    for i = 1,5 do
+        hrp.CFrame = hrp.CFrame * CFrame.new(-350,0,0)
+        task.wait(0.1)
+    end
+end
+
+local function performRegularDesync()
+    teleportLeft()
+    setWorldStepMax(-9999999)
+    task.wait(0.5)
+    setWorldStepMax(-1)
+end
+
+local function performQuantumDesync()
+    pcall(function()
+        local backpack = player:WaitForChild("Backpack")
+        local char = player.Character or player.CharacterAdded:Wait()
+        local humanoid = char:WaitForChild("Humanoid")
+        local packages = ReplicatedStorage:WaitForChild("Packages",5)
+        local netFolder = packages:WaitForChild("Net",5)
+        local useItemRemote = netFolder:WaitForChild("RE/UseItem",5)
+        local teleportRemote = netFolder:WaitForChild("RE/QuantumCloner/OnTeleport",5)
+
+        local toolNames = {"Quantum Cloner","Brainrot","brainrot"}
+        local tool
+        for _, name in ipairs(toolNames) do
+            tool = backpack:FindFirstChild(name) or char:FindFirstChild(name)
+            if tool then break end
+        end
+        if not tool then
+            for _, item in ipairs(backpack:GetChildren()) do
+                if item:IsA("Tool") then tool=item break end
+            end
+        end
+        if tool and tool.Parent==backpack then humanoid:EquipTool(tool) task.wait(0.5) end
+
+        setWorldStepMax(-9999999999)
+        task.wait(0.2)
+        useItemRemote:FireServer()
+        task.wait(1)
+        teleportRemote:FireServer()
+        task.wait(2)
+        setWorldStepMax(-1)
+    end)
+end
+
+local function startV2Desync()
+    local char = player.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local hrp = char.HumanoidRootPart
+    local radius = 10
+    local angle = 0
+    local speedMultiplier = 5  -- slow speed
+
+    setWorldStepMax(-9999999)
+    v2Active = true
+
+    v2Conn = RunService.Heartbeat:Connect(function(dt)
+        if not v2Active then return end
+        angle = angle + dt * 1.0
+        local dx = math.cos(angle) * speedMultiplier
+        local dz = math.sin(angle) * speedMultiplier
+        hrp.Velocity = Vector3.new(dx, hrp.Velocity.Y, dz)
+    end)
+end
+
+local function stopV2Desync()
+    v2Active = false
+    if v2Conn then v2Conn:Disconnect() v2Conn=nil end
+    setWorldStepMax(-1)
+end
+
+desyncBtn.MouseButton1Click:Connect(function()
+    if currentMode==1 then performRegularDesync()
+    elseif currentMode==2 then performQuantumDesync()
+    elseif currentMode==3 then
+        if not v2Active then startV2Desync() else stopV2Desync() end
+    end
+end)
+
+switchBtn.MouseButton1Click:Connect(function()
+   
+    if currentMode==3 and v2Active then stopV2Desync() end
+
+    currentMode = currentMode + 1
+    if currentMode>#desyncModes then currentMode=1 end
+    desyncBtn.Text = "Desync ("..desyncModes[currentMode]..")"
+end)
