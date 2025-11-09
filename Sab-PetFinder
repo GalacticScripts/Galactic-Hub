@@ -79,8 +79,8 @@ getgenv().TargetPetNames = {
 getgenv().ScriptURL = "https://raw.githubusercontent.com/GalacticScripts/Galactic-Hub/refs/heads/main/Sab-PetFinder"
 
 --// SERVER FILTER SETTINGS
-getgenv().MinPlayers = 10 -- Only join servers with at least this many players
-getgenv().MaxPlayers = 25 -- Maximum players in server (leave room to join)
+getgenv().MinPlayers = 8 -- Only join servers with at least this many players (lowered for better success)
+getgenv().MaxPlayers = 30 -- Maximum players in server
 
 --// SHARED DISCOVERY SETTINGS
 getgenv().ShareDiscoveries = true -- Set to false if you don't want to share with the group
@@ -398,16 +398,22 @@ function serverHop()
             if not cursor then
                 tries += 1
                 cursor = nil
-                task.wait(0.5)
+                task.wait(1) -- Longer wait between page attempts
             end
         else
-            warn("⚠️ Failed to fetch server list. Retrying...")
+            warn("⚠️ Failed to fetch server list. Retrying in 2 seconds...")
             tries += 1
-            task.wait(0.5)
+            task.wait(2)
         end
     end
 
-    warn("❌ No valid servers found. Forcing random teleport...")
+    warn("❌ No valid servers found after multiple attempts.")
+    warn("💡 This could mean:")
+    warn("   - All servers have <" .. minPlayers .. " or >" .. maxPlayers .. " players")
+    warn("   - Roblox API rate limit hit")
+    warn("   - Network connectivity issues")
+    warn("🔄 Waiting 5 seconds then forcing random teleport...")
+    task.wait(5)
     
     -- Queue script before random teleport
     queueScript()
