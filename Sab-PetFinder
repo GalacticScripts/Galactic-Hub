@@ -242,9 +242,9 @@ local function sendWebhook(foundPets)
     local minutes = math.floor((runTime % 3600) / 60)
     local timeStr = hours > 0 and string.format("%dh %dm", hours, minutes) or string.format("%dm", minutes)
 
-
     -- Personal Webhook (Your Private Alerts)
-            local personalData = HttpService:JSONEncode({
+    if personalWebhook and personalWebhook ~= "https://discord.com/api/webhooks/1436947291196882944/fHYylID8lkYCQ7A8106dRWj4clAwvei-aLIQsveHMxznrWA2gVsYkb7tzY_dpZW8fwVE" then
+        local personalData = HttpService:JSONEncode({
             ["content"] = "@everyone 🚨 SECRET PET DETECTED!",
             ["embeds"] = {{
                 ["title"] = "🎯 " .. #foundPets .. " Secret Pet(s) Found!",
@@ -275,7 +275,7 @@ local function sendWebhook(foundPets)
 
     -- Shared Webhook (Group Discovery System)
     if shareDiscoveries and sharedWebhook and sharedWebhook ~= "https://discord.com/api/webhooks/1436947384092590116/0fWmzPrp-eHqjgfjQj5-gnsXuzv5kC00hv5gGb8uDTydbCvvuWWfE7NJl43xBl-fjITG" then
-          local sharedData = HttpService:JSONEncode({
+        local sharedData = HttpService:JSONEncode({
             ["content"] = "🔔 Group Discovery Alert!",
             ["embeds"] = {{
                 ["title"] = "🧠 " .. #foundPets .. " Secret Pet(s) Found!",
