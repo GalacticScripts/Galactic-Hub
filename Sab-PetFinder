@@ -79,8 +79,8 @@ getgenv().TargetPetNames = {
 getgenv().ScriptURL = "https://raw.githubusercontent.com/GalacticScripts/Galactic-Hub/refs/heads/main/Sab-PetFinder"
 
 --// SERVER FILTER SETTINGS
-getgenv().MinPlayers = 8 -- Only join servers with at least this many players (lowered for better success)
-getgenv().MaxPlayers = 30 -- Maximum players in server
+getgenv().MinPlayers = 5 -- Only join servers with at least this many players
+getgenv().MaxPlayers = 40 -- Maximum players in server (very relaxed for more options)
 
 --// SHARED DISCOVERY SETTINGS
 getgenv().ShareDiscoveries = true -- Set to false if you don't want to share with the group
@@ -301,7 +301,7 @@ local function sendWebhook(foundPets)
         end
     end
 
-    -- Wait 5 seconds before hopping to give time to join
+        -- Wait 5 seconds before hopping to give time to join
     task.wait(5)
     stopHopping = false
     webhookSent = false
@@ -398,22 +398,24 @@ function serverHop()
             if not cursor then
                 tries += 1
                 cursor = nil
-                task.wait(1) -- Longer wait between page attempts
+                task.wait(1.5) -- Longer wait between page attempts
+            else
+                task.wait(0.3) -- Small delay when getting next page
             end
         else
-            warn("⚠️ Failed to fetch server list. Retrying in 2 seconds...")
+            warn("⚠️ Failed to fetch server list. Retrying in 3 seconds...")
             tries += 1
-            task.wait(2)
+            task.wait(3)
         end
     end
 
     warn("❌ No valid servers found after multiple attempts.")
-    warn("💡 This could mean:")
+    warn("💡 Possible reasons:")
     warn("   - All servers have <" .. minPlayers .. " or >" .. maxPlayers .. " players")
-    warn("   - Roblox API rate limit hit")
-    warn("   - Network connectivity issues")
-    warn("🔄 Waiting 5 seconds then forcing random teleport...")
-    task.wait(5)
+    warn("   - Roblox API rate limit (happens frequently)")
+    warn("   - Already visited most available servers")
+    warn("🔄 Waiting 10 seconds before random teleport to avoid rate limits...")
+    task.wait(10)
     
     -- Queue script before random teleport
     queueScript()
@@ -465,6 +467,9 @@ if #petsFound > 0 then
         webhookSent = true
     end
 else
+    print("🔍 No target pets found. Hopping to next server...")
+    task.delay(1.5, serverHop)
+end
     print("🔍 No target pets found. Hopping to next server...")
     task.delay(1.5, serverHop)
 end
