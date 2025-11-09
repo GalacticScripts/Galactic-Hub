@@ -27,409 +27,368 @@ getgenv().TargetPetNames = getgenv().TargetPetNames or {
 }
 
 -- Server filters (will be coerced to numbers safely)
-getgenv().MinPlayers       = getgenv().MinPlayers or 5
-getgenv().MaxPlayers       = getgenv().MaxPlayers or 40
-getgenv().ShareDiscoveries = (getgenv().ShareDiscoveries ~= false) -- default true
-getgenv().NotifyOnGroupFinds = (getgenv().NotifyOnGroupFinds ~= false)
+getgenv().ScriptURL  = "https://raw.githubusercontent.com/GalacticScripts/Galactic-Hub/refs/heads/main/Sab-PetFinder"
+getgenv().MinPlayers = 5
+getgenv().MaxPlayers = 40
+getgenv().ShareDiscoveries   = true
+getgenv().NotifyOnGroupFinds = true
 
---== SERVICES / LOCALS =========================================================
+-- ===== Services =====
 local Players         = game:GetService("Players")
 local HttpService     = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
-local CoreGui         = game:GetService("CoreGui")
+local StarterGui      = game:GetService("StarterGui")
 
--- Wait for LocalPlayer
-repeat task.wait() until Players.LocalPlayer
-local LocalPlayer = Players.LocalPlayer
+-- ===== Locals / Safe defaults =====
+local LocalPlayer repeat LocalPlayer = Players.LocalPlayer task.wait() until LocalPlayer
 
--- Coerce numeric config & guard
-local minPlayers = tonumber(getgenv().MinPlayers) or 1
-local maxPlayers = tonumber(getgenv().MaxPlayers) or 100
-if minPlayers > maxPlayers then minPlayers, maxPlayers = maxPlayers, minPlayers end
+local function toNum(x, d)  return tonumber(x) or d end
+local personalWebhook   = getgenv().PersonalWebhook or ""
+local sharedWebhook     = getgenv().SharedWebhook   or ""
+local yourName          = getgenv().YourName or LocalPlayer.Name
+local targetPets        = getgenv().TargetPetNames or {}
+local scriptURL         = getgenv().ScriptURL or ""
+local minPlayers        = toNum(getgenv().MinPlayers, 5)
+local maxPlayers        = toNum(getgenv().MaxPlayers, 40)
+local shareDiscoveries  = not not getgenv().ShareDiscoveries
+local notifyOnGroupFinds= not not getgenv().NotifyOnGroupFinds
 
-local personalWebhook  = getgenv().PersonalWebhook
-local sharedWebhook    = getgenv().SharedWebhook
-local yourName         = getgenv().YourName or LocalPlayer.Name
-local targetPets       = getgenv().TargetPetNames
-local shareDiscoveries = getgenv().ShareDiscoveries
+-- hard constants (avoid nil-comparisons)
+local MAX_FETCH_FAILS   = 4
+local MAX_PAGE_TRIES    = 3
 
--- Stats persisted across hops
-getgenv().TotalScans   = getgenv().TotalScans   or 0
-getgenv().TotalFinds   = getgenv().TotalFinds   or 0
-getgenv().GroupFinds   = getgenv().GroupFinds   or 0
-getgenv().StartTime    = getgenv().StartTime    or os.time()
+-- global counters
+getgenv().TotalScans  = toNum(getgenv().TotalScans, 0)
+getgenv().TotalFinds  = toNum(getgenv().TotalFinds, 0)
+getgenv().GroupFinds  = toNum(getgenv().GroupFinds, 0)
+getgenv().StartTime   = getgenv().StartTime or os.time()
 
--- Hop & error control
+-- state
 local visitedJobIds = {[game.JobId] = true}
-local hops               = 0
-local maxHopsBeforeReset = 50
-local teleportFails      = 0
-local maxTeleportRetries = 3
-
+local hops, maxHopsBeforeReset = 0, 50
+local teleportFails, maxTeleportRetries = 0, 3
 local detectedPets = {}
-local webhookSent  = false
-local stopHopping  = false
+local webhookSent, stopHopping = false, false
 
-local MAX_FETCH_FAILS = 4
-local MAX_PAGE_TRIES  = 3
-
--- Forward declarations so we can reference before definitions
-local serverHop
-local sendWebhook
-
---== UTIL: Re-execute script after teleport ===================================
-local function queueScriptSelf()
-    local code = [[repeat task.wait() until game:IsLoaded(); task.wait(2);
-        pcall(function()
-            loadstring(game:HttpGet("]] .. tostring(getgenv().ScriptURL or "") .. [[", true))()
-        end)]]
-    if queue_on_teleport then queue_on_teleport(code) end
-    if syn and syn.queue_on_teleport then syn.queue_on_teleport(code) end
-    if fluxus and fluxus.queue_on_teleport then fluxus.queue_on_teleport(code) end
+-- ===== Re-queue helper =====
+local function queueScript()
+  local code = ([[
+    repeat task.wait() until game:IsLoaded()
+    task.wait(3)
+    local ok,err = pcall(function() loadstring(game:HttpGet("%s"))() end)
+    if not ok then warn("Failed to load script:", err) end
+  ]]):format(scriptURL)
+  if queue_on_teleport then queue_on_teleport(code) end
+  if syn and syn.queue_on_teleport then syn.queue_on_teleport(code) end
+  if fluxus and fluxus.queue_on_teleport then fluxus.queue_on_teleport(code) end
 end
 
---== TELEPORT FAIL HANDLER =====================================================
+-- ===== UI Prompt when a target is found =====
+local function promptStayOrHop()
+  -- quick Core notification as a fallback
+  pcall(function()
+    StarterGui:SetCore("SendNotification", {
+      Title = "Target Found",
+      Text  = "Stay here or keep hopping?",
+      Duration = 8,
+      Button1 = "Stay here",
+      Button2 = "Keep hopping"
+    })
+  end)
+
+  -- lightweight ScreenGui with buttons
+  local gui = Instance.new("ScreenGui")
+  gui.Name = "FinderPrompt"
+  gui.ResetOnSpawn = false
+  gui.Parent = game:GetService("CoreGui")
+
+  local frame = Instance.new("Frame")
+  frame.Size = UDim2.fromOffset(360, 120)
+  frame.Position = UDim2.new(0.5, -180, 0.15, 0)
+  frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
+  frame.BackgroundTransparency = 0.1
+  frame.Parent = gui
+
+  local uiCorner = Instance.new("UICorner", frame)
+  uiCorner.CornerRadius = UDim.new(0,12)
+
+  local label = Instance.new("TextLabel")
+  label.Size = UDim2.new(1, -20, 0, 48)
+  label.Position = UDim2.fromOffset(10, 8)
+  label.BackgroundTransparency = 1
+  label.Font = Enum.Font.GothamBold
+  label.TextScaled = true
+  label.Text = "🎯 Target detected — what next?"
+  label.TextColor3 = Color3.new(1,1,1)
+  label.Parent = frame
+
+  local stay = Instance.new("TextButton")
+  stay.Text = "Stay here"
+  stay.Size = UDim2.new(0.48, -15, 0, 44)
+  stay.Position = UDim2.fromOffset(10, 68)
+  stay.BackgroundColor3 = Color3.fromRGB(50,170,90)
+  Instance.new("UICorner", stay).CornerRadius = UDim.new(0,8)
+  stay.Parent = frame
+
+  local hop = Instance.new("TextButton")
+  hop.Text = "Keep hopping"
+  hop.Size = UDim2.new(0.48, -15, 0, 44)
+  hop.Position = UDim2.new(1, -10, 0, 68)
+  hop.AnchorPoint = Vector2.new(1,0)
+  hop.BackgroundColor3 = Color3.fromRGB(200,70,70)
+  Instance.new("UICorner", hop).CornerRadius = UDim.new(0,8)
+  hop.Parent = frame
+
+  stay.MouseButton1Click:Connect(function()
+    stopHopping = true
+    gui:Destroy()
+  end)
+  hop.MouseButton1Click:Connect(function()
+    stopHopping = false
+    gui:Destroy()
+    task.defer(function() serverHop() end)
+  end)
+end
+
+-- ===== Teleport failure handling =====
 TeleportService.TeleportInitFailed:Connect(function(_, result)
-    teleportFails += 1
-    warn("Teleport failed:", result)
-    if teleportFails >= maxTeleportRetries then
-        teleportFails = 0
-        queueScriptSelf()
-        TeleportService:Teleport(game.PlaceId)
-        return
-    end
+  teleportFails += 1
+  if result == Enum.TeleportResult.GameFull then
+    warn("⚠️ Game full. Retrying teleport…")
+  elseif result == Enum.TeleportResult.Unauthorized then
+    warn("❌ Unauthorized/private server. Blacklisting & retry…")
+    visitedJobIds[game.JobId] = true
+  else
+    warn("❌ Teleport error:", result)
+  end
+  if teleportFails >= maxTeleportRetries then
+    teleportFails = 0
+    queueScript()
+    TeleportService:Teleport(game.PlaceId)
+  else
     task.wait(1)
-    if serverHop then serverHop() end
+    serverHop()
+  end
 end)
 
---== ESP =======================================================================
-local function addESP(model)
-    if not model or not model:IsA("Model") then return end
-    if model:FindFirstChild("PetESP", true) or model:FindFirstChild("PetHighlight", true) then return end
+-- ===== ESP =====
+local function addESP(targetModel)
+  if targetModel:FindFirstChild("PetESP", true) or targetModel:FindFirstChild("PetHighlight", true) then return end
+  local part = targetModel.PrimaryPart or targetModel:FindFirstChildWhichIsA("BasePart", true)
+  if not part then return end
 
-    local part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-    if not part then return end
+  local bb = Instance.new("BillboardGui")
+  bb.Name, bb.Adornee, bb.AlwaysOnTop = "PetESP", part, true
+  bb.Size         = UDim2.new(0, 220, 0, 60)
+  bb.StudsOffset  = Vector3.new(0, 6, 0)
+  bb.MaxDistance  = 600
+  bb.Parent       = part
 
-    local bb = Instance.new("BillboardGui")
-    bb.Name = "PetESP"
-    bb.Adornee = part
-    bb.AlwaysOnTop = true
-    bb.Size = UDim2.new(0, 260, 0, 72)
-    bb.MaxDistance = 800
-    bb.StudsOffset = Vector3.new(0, 8, 0)
-    bb.Parent = part
+  local label = Instance.new("TextLabel")
+  label.Size = UDim2.fromScale(1,1)
+  label.BackgroundTransparency = 0.15
+  label.BackgroundColor3 = Color3.fromRGB(25,25,25)
+  label.Text = "🎯 TARGET: ".. targetModel.Name
+  label.TextColor3 = Color3.new(1,1,1)
+  label.TextStrokeTransparency = 0.1
+  label.TextScaled = true
+  label.Font = Enum.Font.GothamBlack
+  label.Parent = bb
+  local stroke = Instance.new("UIStroke", label)
+  stroke.Thickness = 2.5
+  stroke.Color = Color3.fromRGB(255,0,0)
 
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, 0, 1, 0)
-    lbl.BackgroundTransparency = 0.15
-    lbl.BackgroundColor3 = Color3.fromRGB(25,25,25)
-    lbl.Text = "🎯 TARGET: " .. model.Name
-    lbl.TextColor3 = Color3.new(1,1,1)
-    lbl.TextStrokeTransparency = 0.1
-    lbl.TextScaled = true
-    lbl.Font = Enum.Font.GothamBlack
-    lbl.Parent = bb
-    local stroke = Instance.new("UIStroke", lbl)
-    stroke.Color = Color3.fromRGB(255,0,0)
-    stroke.Thickness = 3
-
-    local hl = Instance.new("Highlight")
-    hl.Name = "PetHighlight"
-    hl.Adornee = model
-    hl.FillColor = Color3.fromRGB(255,60,60)
-    hl.FillTransparency = 0.75
-    hl.OutlineColor = Color3.fromRGB(255,0,0)
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = model
+  local hl = Instance.new("Highlight")
+  hl.Name, hl.Adornee = "PetHighlight", targetModel
+  hl.FillColor, hl.FillTransparency = Color3.fromRGB(255,60,60), 0.75
+  hl.OutlineColor, hl.OutlineTransparency = Color3.fromRGB(255,0,0), 0
+  hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+  hl.Parent = targetModel
 end
 
---== HTTP WRAPPER ==============================================================
-local function sendToWebhook(url, jsonData)
-    local req = http_request or request or (syn and syn.request)
-    if not req then return false, "Executor HTTP not available" end
-    local ok, err = pcall(function()
-        req({ Url = url, Method = "POST", Headers = {["Content-Type"]="application/json"}, Body = jsonData })
-    end)
-    return ok, err
+-- ===== Webhook plumbing =====
+local function sendToWebhook(url, json)
+  local req = http_request or request or (syn and syn.request)
+  if not req then return false, "No HTTP in executor" end
+  return pcall(function()
+    req({ Url = url, Method = "POST", Headers = {["Content-Type"]="application/json"}, Body = json })
+  end)
 end
 
---== PROMPT: Stay or Hop =======================================================
-local function promptStayOrHop(timeoutSeconds)
-    timeoutSeconds = timeoutSeconds or 12
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "PetFinderPrompt"
-    sg.ResetOnSpawn = false
-    sg.IgnoreGuiInset = true
-    sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    sg.Parent = CoreGui
+local function sendWebhook(foundPets)
+  getgenv().TotalFinds += 1
 
-    local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 420, 0, 180)
-    frame.Position = UDim2.new(0.5, -210, 0.5, -90)
-    frame.BackgroundColor3 = Color3.fromRGB(22,22,22)
-    frame.BorderSizePixel = 0
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+  local counts = {}
+  for _,p in ipairs(foundPets) do counts[p] = (counts[p] or 0)+1 end
+  local list = {}
+  for name,c in pairs(counts) do table.insert(list, c>1 and (name.." x"..c) or name) end
 
-    local title = Instance.new("TextLabel", frame)
-    title.BackgroundTransparency = 1
-    title.Size = UDim2.new(1, -20, 0, 40)
-    title.Position = UDim2.new(0,10,0,10)
-    title.Text = "Secret found — what next?"
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 20
-    title.TextColor3 = Color3.new(1,1,1)
+  local link  = "[Join Server](https://fern.wtf/joiner?placeId="..game.PlaceId.."&gameInstanceId="..game.JobId..")"
+  local run   = os.time() - getgenv().StartTime
+  local hrs   = math.floor(run/3600)
+  local mins  = math.floor((run%3600)/60)
+  local tstr  = (hrs>0) and (hrs.."h "..mins.."m") or (mins.."m")
 
-    local info = Instance.new("TextLabel", frame)
-    info.BackgroundTransparency = 1
-    info.Size = UDim2.new(1, -20, 0, 40)
-    info.Position = UDim2.new(0,10,0,50)
-    info.Text = "Stay to grab it, or hop to keep scanning other servers."
-    info.Font = Enum.Font.Gotham
-    info.TextSize = 16
-    info.TextColor3 = Color3.fromRGB(200,200,200)
+  local function packEmbed(descTitle, descBody)
+    return HttpService:JSONEncode({
+      content = "@everyone 🚨 SECRET PET DETECTED!",
+      embeds = {{
+        title = descTitle,
+        description = descBody,
+        fields = {
+          {name="📍 Location", value = ("`TeleportService:TeleportToPlaceInstance(%d, '%s')`"):format(game.PlaceId, game.JobId)},
+          {name="👥 Players",  value = tostring(#Players:GetPlayers()), inline=true},
+          {name="🐾 Pets Found", value = table.concat(list, "\n")},
+          {name="🔗 Quick Join", value = link},
+          {name="📊 Stats", value = ("Scans %d | Finds %d | Runtime %s"):format(getgenv().TotalScans, getgenv().TotalFinds, tstr)},
+          {name="⏰ Time", value = os.date("%m/%d/%y, %I:%M %p")}
+        },
+        color = 0xFF3366,
+        footer = { text = "PlaceId: "..game.PlaceId.." • Found by "..yourName }
+      }}
+    })
+  end
 
-    local stay = Instance.new("TextButton", frame)
-    stay.Size = UDim2.new(0.5, -15, 0, 44)
-    stay.Position = UDim2.new(0,10,1,-54)
-    stay.Text = "Stay in this server"
-    stay.Font = Enum.Font.GothamBold
-    stay.TextSize = 16
-    stay.TextColor3 = Color3.new(1,1,1)
-    stay.BackgroundColor3 = Color3.fromRGB(31,140,76)
-    Instance.new("UICorner", stay).CornerRadius = UDim.new(0,8)
+  if personalWebhook ~= "" then
+    local ok = sendToWebhook(personalWebhook, packEmbed("🎯 "..#foundPets.." Secret Pet(s) Found!", "**YOU found secret pets in this server!**"))
+    if ok then print("✅ Personal webhook sent!") end
+  end
+  if shareDiscoveries and sharedWebhook ~= "" then
+    local ok = sendToWebhook(sharedWebhook, packEmbed("🧠 "..#foundPets.." Secret Pet(s) Found!", "**"..yourName.."** discovered secret pets!"))
+    if ok then print("✅ Shared discovery sent to group!") end
+  end
 
-    local hop = Instance.new("TextButton", frame)
-    hop.Size = UDim2.new(0.5, -15, 0, 44)
-    hop.Position = UDim2.new(0.5,5,1,-54)
-    hop.Text = "Hop to next server"
-    hop.Font = Enum.Font.GothamBold
-    hop.TextSize = 16
-    hop.TextColor3 = Color3.new(1,1,1)
-    hop.BackgroundColor3 = Color3.fromRGB(50,90,200)
-    Instance.new("UICorner", hop).CornerRadius = UDim.new(0,8)
-
-    local choice
-    stay.MouseButton1Click:Connect(function() choice = "stay"; sg:Destroy() end)
-    hop.MouseButton1Click:Connect(function() choice = "hop";  sg:Destroy() end)
-
-    task.delay(timeoutSeconds, function()
-        if sg.Parent and not choice then choice = "stay"; sg:Destroy() end
-    end)
-
-    repeat task.wait() until choice ~= nil
-    return choice
+  -- show prompt so the player decides to stay / hop
+  task.defer(promptStayOrHop)
 end
 
---== WEBHOOK SENDER ============================================================
-function sendWebhook(foundPets)
-    getgenv().TotalFinds += 1
-
-    -- counts to "Name xN"
-    local counts, lines = {}, {}
-    for _, n in ipairs(foundPets) do counts[n] = (counts[n] or 0) + 1 end
-    for n,c in pairs(counts) do table.insert(lines, c>1 and (n .. " x" .. c) or n) end
-
-    local serverLink = string.format("[Join Server](https://fern.wtf/joiner?placeId=%d&gameInstanceId=%s)", game.PlaceId, game.JobId)
-    local rt   = os.time() - getgenv().StartTime
-    local hrs  = math.floor(rt/3600)
-    local mins = math.floor((rt%3600)/60)
-    local runtime = (hrs>0 and (hrs.."h ") or "") .. mins .. "m"
-
-    -- personal
-    if type(personalWebhook)=="string" and #personalWebhook>0 then
-        local payload = HttpService:JSONEncode({
-            content = "@everyone 🚨 SECRET PET DETECTED!",
-            embeds = {{
-                title = ("🎯 %d Secret Pet(s) Found!"):format(#foundPets),
-                description = "**YOU found secret pets in this server!**",
-                fields = {
-                    {name="📍 Location Info", value=string.format("`TeleportToPlaceInstance(%d, \"%s\")`", game.PlaceId, game.JobId)},
-                    {name="👥 Players", value=tostring(#Players:GetPlayers())},
-                    {name="🐾 Pets Found", value=table.concat(lines, "\n")},
-                    {name="🔗 Quick Join", value=serverLink},
-                    {name="📊 Your Stats", value=("Scans: %d | Finds: %d | Runtime: %s"):format(getgenv().TotalScans, getgenv().TotalFinds, runtime)},
-                    {name="⏰ Time", value=os.date("%m/%d/%y, %I:%M %p")}
-                },
-                color = 0x00FF00,
-                footer = {text = "Place ID: " .. game.PlaceId .. " • Found by YOU"}
-            }}
-        })
-        sendToWebhook(personalWebhook, payload)
-    end
-
-    -- shared
-    if shareDiscoveries and type(sharedWebhook)=="string" and #sharedWebhook>0 then
-        local payload = HttpService:JSONEncode({
-            content = "🔔 Group Discovery Alert!",
-            embeds = {{
-                title = ("🧠 %d Secret Pet(s) Found!"):format(#foundPets),
-                description = "**" .. yourName .. "** discovered secret pets!",
-                fields = {
-                    {name="📍 Location Info", value=string.format("`TeleportToPlaceInstance(%d, \"%s\")`", game.PlaceId, game.JobId)},
-                    {name="👥 Players in Server", value=tostring(#Players:GetPlayers()), inline=true},
-                    {name="🔍 Found By", value=yourName, inline=true},
-                    {name="🐾 Pets Found", value=table.concat(lines, "\n")},
-                    {name="🔗 Quick Join", value=serverLink},
-                    {name="⏰ Time", value=os.date("%m/%d/%y, %I:%M %p")}
-                },
-                color = 0xFF00FF,
-                footer = {text = "Shared Discovery • Place ID: " .. game.PlaceId}
-            }}
-        })
-        sendToWebhook(sharedWebhook, payload)
-    end
-
-    -- ask user what to do
-    local decision = promptStayOrHop(12)
-    if decision == "stay" then
-        stopHopping = true
-        webhookSent = false
-        return
-    else
-        stopHopping = false
-        webhookSent = false
-        task.wait(0.5)
-        serverHop()
-    end
-end
-
---== MATCH & SCAN ==============================================================
+-- ===== Target match / scanning =====
 local function matchesTarget(name)
-    if not name then return false end
-    local ln = string.lower(name)
-    for _, t in ipairs(targetPets) do
-        if ln == string.lower(t) then return true end
-    end
-    return false
+  for _,t in ipairs(targetPets) do
+    if string.lower(name) == string.lower(t) then return true end
+  end
+  return false
 end
 
 local function checkForPets()
-    local found = {}
-    local plots = workspace:FindFirstChild("Plots")
-    if plots then
-        for _, plot in ipairs(plots:GetChildren()) do
-            if plot:IsA("Model") then
-                for _, m in ipairs(plot:GetChildren()) do
-                    if m:IsA("Model") and matchesTarget(m.Name) and not m:FindFirstChild("PetESP") then
-                        addESP(m)
-                        table.insert(found, m.Name)
-                        stopHopping = true
-                    end
-                end
-            end
+  local found = {}
+  local plots = workspace:FindFirstChild("Plots")
+  if not plots then return found end
+  for _,plot in ipairs(plots:GetChildren()) do
+    if plot:IsA("Model") then
+      for _,obj in ipairs(plot:GetChildren()) do
+        if obj:IsA("Model") and matchesTarget(obj.Name) and not obj:FindFirstChild("PetESP") then
+          addESP(obj)
+          table.insert(found, obj.Name)
+          stopHopping = true
         end
+      end
     end
-    return found
+  end
+  return found
 end
 
---== SERVER HOP ================================================================
+-- ===== Server hop =====
 function serverHop()
-    if stopHopping then return end
+  if stopHopping then return end
 
-    local PlaceId, JobId = game.PlaceId, game.JobId
-    local fetchFails, tries, cursor, backoff = 0, 0, nil, 3
+  local PlaceId, JobId = game.PlaceId, game.JobId
+  local fetchFails, backoff, tries, cursor = 0, 3.0, 0, nil
 
-    hops += 1
-    if hops >= maxHopsBeforeReset then
-        visitedJobIds = {[JobId] = true}
-        hops = 0
-        print("♻️ Resetting visited JobIds.")
-    end
+  hops += 1
+  if hops >= maxHopsBeforeReset then
+    visitedJobIds = {[JobId]=true}
+    hops = 0
+    print("♻️ Resetting visited JobIds.")
+  end
 
-    local function forceRandomHop()
-        warn("⚠️ Forcing random hop (fallback)…")
-        queueScriptSelf()
-        TeleportService:Teleport(PlaceId)
-    end
+  local function forceRandomHop()
+    warn("⚠️ Forcing random hop (fallback)…")
+    queueScript()
+    TeleportService:Teleport(PlaceId)
+  end
 
-    while tries < MAX_PAGE_TRIES do
-        local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(PlaceId)
-        if cursor then url ..= "&cursor=" .. cursor end
+  while tries < MAX_PAGE_TRIES do
+    local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(PlaceId)
+    if cursor then url ..= "&cursor="..cursor end
 
-        local ok, decoded = pcall(function()
-            local raw = HttpService:GetAsync(url, true)
-            return HttpService:JSONDecode(raw)
-        end)
+    local ok, decoded = pcall(function()
+      local raw = HttpService:GetAsync(url, true)
+      return HttpService:JSONDecode(raw)
+    end)
 
-        if not ok or not decoded or not decoded.data then
-            fetchFails += 1
-            warn(("⚠️ Failed to fetch server list. Retrying in %.0f seconds..."):format(backoff))
-            task.wait(backoff)
-            backoff = math.min(backoff + 3, 15)
-            if fetchFails >= MAX_FETCH_FAILS then return forceRandomHop() end
-        else
-            local servers = {}
-            for _, s in ipairs(decoded.data) do
-                local playing = tonumber(s.playing or 0) or 0
-                local maxp    = tonumber(s.maxPlayers or 1) or 1
-                if playing >= minPlayers and playing <= maxPlayers and playing < maxp
-                   and s.id ~= JobId and not visitedJobIds[s.id] then
-                    table.insert(servers, {id = s.id, players = playing})
-                end
-            end
-
-            if #servers > 0 then
-                table.sort(servers, function(a,b) return a.players > b.players end)
-                local pick = servers[1].id
-                visitedJobIds[pick] = true
-                print(("✅ Hopping to server with %d players: %s"):format(servers[1].players, pick))
-                teleportFails = 0
-                queueScriptSelf()
-                TeleportService:TeleportToPlaceInstance(PlaceId, pick)
-                return
-            end
-
-            cursor = decoded.nextPageCursor
-            if not cursor then tries += 1; task.wait(1.25) else task.wait(0.35) end
+    if not ok or not decoded or not decoded.data then
+      fetchFails += 1
+      warn(("⚠️ Failed to fetch server list. Retrying in %.0f seconds..."):format(backoff))
+      task.wait(backoff)
+      backoff = math.min(backoff + 3, 15)
+      if fetchFails >= MAX_FETCH_FAILS then
+        return forceRandomHop()
+      end
+    else
+      local servers = {}
+      for _,s in ipairs(decoded.data) do
+        local playing = toNum(s.playing, 0)
+        local maxp    = toNum(s.maxPlayers, 1)
+        if playing >= minPlayers and playing <= maxPlayers and playing < maxp and s.id ~= JobId and not visitedJobIds[s.id] then
+          table.insert(servers, {id=s.id, players=playing})
         end
+      end
+      if #servers > 0 then
+        table.sort(servers, function(a,b) return a.players > b.players end)
+        local pick = servers[1].id
+        visitedJobIds[pick] = true
+        print(("✅ Hopping to server with %d players: %s"):format(servers[1].players, pick))
+        teleportFails = 0
+        queueScript()
+        TeleportService:TeleportToPlaceInstance(PlaceId, pick)
+        return
+      end
+      cursor = decoded.nextPageCursor
+      if not cursor then tries += 1; task.wait(1.5) else task.wait(0.4) end
     end
+  end
 
-    forceRandomHop()
+  forceRandomHop()
 end
 
---== LIVE DETECTION ============================================================
+-- live detection
 workspace.DescendantAdded:Connect(function(obj)
-    task.wait(0.25)
-    local plots = workspace:FindFirstChild("Plots")
-    if plots and obj:IsA("Model") and obj.Parent and obj.Parent:IsDescendantOf(plots) then
-        if matchesTarget(obj.Name) and not obj:FindFirstChild("PetESP") then
-            if not detectedPets[obj] then
-                detectedPets[obj] = true
-                addESP(obj)
-                print("🎯 New pet appeared:", obj.Name)
-                stopHopping = true
-                if not webhookSent then
-                    webhookSent = true
-                    sendWebhook({obj.Name})
-                end
-            end
-        end
+  task.wait(0.25)
+  local plots = workspace:FindFirstChild("Plots")
+  if plots and obj:IsA("Model") and obj.Parent and obj.Parent:IsDescendantOf(plots) and matchesTarget(obj.Name) and not obj:FindFirstChild("PetESP") then
+    if not detectedPets[obj] then
+      detectedPets[obj] = true
+      addESP(obj)
+      print("🎯 New pet appeared:", obj.Name)
+      stopHopping = true
+      if not webhookSent then
+        webhookSent = true
+        sendWebhook({obj.Name})
+      end
     end
+  end
 end)
 
---== BOOT ======================================================================
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-print("🔍 Pet Finder - Shared Discovery Edition")
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-print("👤 Username:", yourName)
-print("📊 Total scans:", getgenv().TotalScans)
-print("🎯 Your finds:", getgenv().TotalFinds)
-print("🤝 Group sharing:", shareDiscoveries and "ENABLED" or "DISABLED")
-print("⏱️ Session runtime:", math.floor((os.time() - getgenv().StartTime)/60) .. " minutes")
-print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+-- ===== Banner & first sweep =====
+print(("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🔍 Pet Finder - Shared Discovery Edition\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n👤 Username: %s\n📊 Total scans: %d\n🎯 Your finds: %d\n🤝 Group sharing: %s\n⏱️ Session runtime: %d minutes\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+  :format(yourName, getgenv().TotalScans, getgenv().TotalFinds, (shareDiscoveries and "ENABLED" or "DISABLED"), math.floor((os.time()-getgenv().StartTime)/60)))
 
 task.wait(6)
 getgenv().TotalScans += 1
 
 local first = checkForPets()
 if #first > 0 then
-    for _, n in ipairs(first) do detectedPets[n] = true end
-    if not webhookSent then
-        webhookSent = true
-        print("🎯 Found pet(s):", table.concat(first, ", "))
-        sendWebhook(first)
-    end
+  for _,n in ipairs(first) do detectedPets[n] = true end
+  if not webhookSent then
+    print("🎯 Found pet(s):", table.concat(first, ", "))
+    webhookSent = true
+    sendWebhook(first)
+  end
 else
+  print("🔍 No target pets found. Hopping to next server…")
+  task.delay(1.5, serverHop)
+end
     print("🔍 No target pets found. Hopping to next server...")
     task.delay(1.5, serverHop)
 end
