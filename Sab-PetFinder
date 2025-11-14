@@ -1,13 +1,15 @@
 --========================================================
---  Pet Finder – Shared Discovery Edition (Full Script)
---  Δ-executor friendly. Works with http_request/request/syn.request.
---  Fill in your webhooks below.
+--  Pet Finder – Shared Discovery Edition (Alt Scanner)
+--  Adds BrainrotBotWebhook for backend / dashboard feed.
 --========================================================
 
 --== USER CONFIG ===============================================================
-getgenv().PersonalWebhook = "https://discord.com/api/webhooks/1436947291196882944/fHYylID8lkYCQ7A8106dRWj4clAwvei-aLIQsveHMxznrWA2gVsYkb7tzY_dpZW8fwVE"
-getgenv().SharedWebhook = "https://discord.com/api/webhooks/1436947384092590116/0fWmzPrp-eHqjgfjQj5-gnsXuzv5kC00hv5gGb8uDTydbCvvuWWfE7NJl43xBl-fjITG"
-getgenv().YourName        = getgenv().YourName or "YourNameHere"
+getgenv().PersonalWebhook = "https://discord.com/api/webhooks/1436947291196882944/fHYylID8lkYCQ7A8106dRWjQ4clAwvei-aLIQsveHMxznrWA2gVsYkb7tzY_dpZW8fwVE"
+getgenv().DatabaseWebhook = "https://discord.com/api/webhooks/1438616657416290345/kQ05gUf76q068sIC5Z_Um_MK4Mnl6GQS0nY6ZMpi476p5oYA5Sbs6rNxolFqE3eTBQu1"
+
+getgenv().BrainrotAPIURL = getgenv().BrainrotAPIURL or "http://193.70.34.27:20251/brainrots"
+
+getgenv().YourName          = getgenv().YourName or "YourNameHere"
 
 -- Targets (exact name match, case-insensitive)
 getgenv().TargetPetNames = getgenv().TargetPetNames or {
@@ -26,11 +28,10 @@ getgenv().TargetPetNames = getgenv().TargetPetNames or {
     "Los Tralaleritos","Guerriro Digitale","La Cucaracha","Las Tralaleritas","Zombie Tralala"
 }
 
--- Server filters (will be coerced to numbers safely)
+-- Server filters
 getgenv().MinPlayers       = getgenv().MinPlayers or 5
 getgenv().MaxPlayers       = getgenv().MaxPlayers or 40
-getgenv().ShareDiscoveries = (getgenv().ShareDiscoveries ~= false) -- default true
-getgenv().NotifyOnGroupFinds = (getgenv().NotifyOnGroupFinds ~= false)
+getgenv().ShareDiscoveries = (getgenv().ShareDiscoveries ~= false)
 
 --== SERVICES / LOCALS =========================================================
 local Players         = game:GetService("Players")
@@ -38,17 +39,16 @@ local HttpService     = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local CoreGui         = game:GetService("CoreGui")
 
--- Wait for LocalPlayer
 repeat task.wait() until Players.LocalPlayer
 local LocalPlayer = Players.LocalPlayer
 
--- Coerce numeric config & guard
 local minPlayers = tonumber(getgenv().MinPlayers) or 1
 local maxPlayers = tonumber(getgenv().MaxPlayers) or 100
 if minPlayers > maxPlayers then minPlayers, maxPlayers = maxPlayers, minPlayers end
 
 local personalWebhook  = getgenv().PersonalWebhook
 local sharedWebhook    = getgenv().SharedWebhook
+local apiURL           = getgenv().BrainrotAPIURL
 local yourName         = getgenv().YourName or LocalPlayer.Name
 local targetPets       = getgenv().TargetPetNames
 local shareDiscoveries = getgenv().ShareDiscoveries
@@ -56,7 +56,6 @@ local shareDiscoveries = getgenv().ShareDiscoveries
 -- Stats persisted across hops
 getgenv().TotalScans   = getgenv().TotalScans   or 0
 getgenv().TotalFinds   = getgenv().TotalFinds   or 0
-getgenv().GroupFinds   = getgenv().GroupFinds   or 0
 getgenv().StartTime    = getgenv().StartTime    or os.time()
 
 -- Hop & error control
@@ -73,16 +72,20 @@ local stopHopping  = false
 local MAX_FETCH_FAILS = 4
 local MAX_PAGE_TRIES  = 3
 
--- Forward declarations so we can reference before definitions
 local serverHop
 local sendWebhook
 
---== UTIL: Re-execute script after teleport ===================================
+--== UTIL: queue script on teleport ===========================================
 local function queueScriptSelf()
-    local code = [[repeat task.wait() until game:IsLoaded(); task.wait(2);
+    local url = tostring(getgenv().ScriptURL or "")
+    if url == "" then return end
+    local code = [[
+        repeat task.wait() until game:IsLoaded()
+        task.wait(2)
         pcall(function()
-            loadstring(game:HttpGet("]] .. tostring(getgenv().ScriptURL or "") .. [[", true))()
-        end)]]
+            loadstring(game:HttpGet("]] .. url .. [[", true))()
+        end)
+    ]]
     if queue_on_teleport then queue_on_teleport(code) end
     if syn and syn.queue_on_teleport then syn.queue_on_teleport(code) end
     if fluxus and fluxus.queue_on_teleport then fluxus.queue_on_teleport(code) end
@@ -129,6 +132,7 @@ local function addESP(model)
     lbl.TextScaled = true
     lbl.Font = Enum.Font.GothamBlack
     lbl.Parent = bb
+
     local stroke = Instance.new("UIStroke", lbl)
     stroke.Color = Color3.fromRGB(255,0,0)
     stroke.Thickness = 3
@@ -143,15 +147,83 @@ local function addESP(model)
     hl.Parent = model
 end
 
---== HTTP WRAPPER ==============================================================
-local function sendToWebhook(url, jsonData)
-    local req = http_request or request or (syn and syn.request)
-    if not req then return false, "Executor HTTP not available" end
-    local ok, err = pcall(function()
-        req({ Url = url, Method = "POST", Headers = {["Content-Type"]="application/json"}, Body = jsonData })
+--== HTTP HELPERS =============================================================
+local function sendRawPOST(url, bodyTable)
+    local req = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
+
+    print("📡 [BrainrotAPI] POST →", url)
+
+    if not req then
+        warn("❌ [BrainrotAPI] No HTTP request function available in executor.")
+        return false
+    end
+
+    local encoded = HttpService:JSONEncode(bodyTable)
+    print("🧾 [BrainrotAPI] Body:", encoded)
+
+    local ok, result = pcall(function()
+        return req({
+            Url     = url,
+            Method  = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body    = encoded
+        })
     end)
-    return ok, err
+
+    if not ok then
+        warn("❌ [BrainrotAPI] HTTP POST crashed:", result)
+        return false
+    end
+
+    if typeof(result) == "table" then
+        print("✅ [BrainrotAPI] Response status:", result.StatusCode or result.Status or "unknown")
+        if result.Body then
+            print("🧾 [BrainrotAPI] Response body:", tostring(result.Body))
+        end
+    else
+        print("✅ [BrainrotAPI] POST completed (no response table)")
+    end
+
+    return true
 end
+
+local function sendToBrainrotAPI(foundPets)
+    if type(apiURL) ~= "string" or apiURL == "" then
+        warn("❌ [BrainrotAPI] apiURL is empty!")
+        return
+    end
+
+    local data = {
+        jobId   = game.JobId,
+        pets    = foundPets,
+        players = #Players:GetPlayers(),
+        scanner = yourName,
+        time    = os.time(),
+    }
+
+    print("📤 [BrainrotAPI] Sending brainrot:", table.concat(foundPets, ", "))
+    sendRawPOST(apiURL, data)
+end
+
+-- NEW: send to backend API /brainrots
+local function sendToBrainrotAPI(foundPets)
+    if type(apiURL) ~= "string" or apiURL == "" then
+        warn("❌ [BrainrotAPI] apiURL is empty!")
+        return
+    end
+
+    local data = {
+        jobId   = game.JobId,
+        pets    = foundPets,
+        players = #Players:GetPlayers(),
+        scanner = yourName,
+        time    = os.time(),
+    }
+
+    print("📤 [BrainrotAPI] Sending brainrot:", table.concat(foundPets, ", "))
+    sendRawPOST(apiURL, data)
+end
+
 
 --== PROMPT: Stay or Hop =======================================================
 local function promptStayOrHop(timeoutSeconds)
@@ -220,11 +292,10 @@ local function promptStayOrHop(timeoutSeconds)
     return choice
 end
 
---== WEBHOOK SENDER ============================================================
+--== WEBHOOK EMBEDS ============================================================
 function sendWebhook(foundPets)
     getgenv().TotalFinds += 1
 
-    -- counts to "Name xN"
     local counts, lines = {}, {}
     for _, n in ipairs(foundPets) do counts[n] = (counts[n] or 0) + 1 end
     for n,c in pairs(counts) do table.insert(lines, c>1 and (n .. " x" .. c) or n) end
@@ -237,9 +308,9 @@ function sendWebhook(foundPets)
 
     -- personal
     if type(personalWebhook)=="string" and #personalWebhook>0 then
-        local payload = HttpService:JSONEncode({
+        sendRawPOST(personalWebhook, {
             content = "@everyone 🚨 SECRET PET DETECTED!",
-            embeds = {{
+            embeds = {({
                 title = ("🎯 %d Secret Pet(s) Found!"):format(#foundPets),
                 description = "**YOU found secret pets in this server!**",
                 fields = {
@@ -252,16 +323,15 @@ function sendWebhook(foundPets)
                 },
                 color = 0x00FF00,
                 footer = {text = "Place ID: " .. game.PlaceId .. " • Found by YOU"}
-            }}
+            })}
         })
-        sendToWebhook(personalWebhook, payload)
     end
 
-    -- shared
+    -- shared (optional)
     if shareDiscoveries and type(sharedWebhook)=="string" and #sharedWebhook>0 then
-        local payload = HttpService:JSONEncode({
+        sendRawPOST(sharedWebhook, {
             content = "🔔 Group Discovery Alert!",
-            embeds = {{
+            embeds = {({
                 title = ("🧠 %d Secret Pet(s) Found!"):format(#foundPets),
                 description = "**" .. yourName .. "** discovered secret pets!",
                 fields = {
@@ -274,12 +344,13 @@ function sendWebhook(foundPets)
                 },
                 color = 0xFF00FF,
                 footer = {text = "Shared Discovery • Place ID: " .. game.PlaceId}
-            }}
+            })}
         })
-        sendToWebhook(sharedWebhook, payload)
     end
 
-    -- ask user what to do
+    -- send to backend for dashboard
+    sendToBrainrotAPI(foundPets)
+
     local decision = promptStayOrHop(12)
     if decision == "stay" then
         stopHopping = true
@@ -294,6 +365,7 @@ function sendWebhook(foundPets)
 end
 
 --== MATCH & SCAN ==============================================================
+
 local function matchesTarget(name)
     if not name then return false end
     local ln = string.lower(name)
@@ -322,15 +394,14 @@ local function checkForPets()
     return found
 end
 
---== SERVER HOP (DROP-IN REPLACEMENT) =========================================
+--== SERVER HOP ================================================================
 function serverHop()
     if stopHopping then return end
 
     local PlaceId, JobId = game.PlaceId, game.JobId
     local cursor, pageTries, fetchFails = nil, 0, 0
-    local backoff = 2.0  -- grows on API errors
+    local backoff = 2.0
 
-    -- reset visited list periodically so we don't soft-lock
     hops += 1
     if hops >= maxHopsBeforeReset then
         visitedJobIds = {[JobId] = true}
@@ -340,15 +411,14 @@ function serverHop()
 
     local function forceRandomHop()
         warn("⚠️ Forcing random hop (fallback)…")
-        queueScriptSelf()                 -- requeue this script after teleport
-        TeleportService:Teleport(PlaceId) -- matchmaking to any public server
+        queueScriptSelf()
+        TeleportService:Teleport(PlaceId)
     end
 
     while pageTries < MAX_PAGE_TRIES do
         local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(PlaceId)
         if cursor then url ..= "&cursor=" .. HttpService:UrlEncode(cursor) end
 
-        -- fetch a page safely (avoid nils / decode failures)
         local okGet, body = pcall(HttpService.GetAsync, HttpService, url, true)
         if not okGet or type(body) ~= "string" or #body == 0 then
             fetchFails += 1
@@ -365,7 +435,6 @@ function serverHop()
                 backoff = math.min(backoff * 1.5, 15)
                 if fetchFails >= MAX_FETCH_FAILS then return forceRandomHop() end
             else
-                -- build candidate list with hard numeric guards
                 local candidates = {}
                 for _, s in ipairs(decoded.data) do
                     local playing = tonumber(s.playing)   or 0
@@ -379,7 +448,6 @@ function serverHop()
                     end
                 end
 
-                -- hop if we found any viable server
                 if #candidates > 0 then
                     table.sort(candidates, function(a,b) return a.players > b.players end)
                     local pick = candidates[1].id
@@ -391,7 +459,6 @@ function serverHop()
                     return
                 end
 
-                -- advance pagination or count a page try
                 cursor = decoded.nextPageCursor
                 if not cursor then
                     pageTries += 1
@@ -403,10 +470,8 @@ function serverHop()
         end
     end
 
-    -- scanned several pages with no candidate → random hop
     forceRandomHop()
 end
-
 
 --== LIVE DETECTION ============================================================
 workspace.DescendantAdded:Connect(function(obj)
@@ -430,7 +495,7 @@ end)
 
 --== BOOT ======================================================================
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-print("🔍 Pet Finder - Shared Discovery Edition")
+print("🔍 Pet Finder - Shared Discovery Edition (Alt Scanner)")
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 print("👤 Username:", yourName)
 print("📊 Total scans:", getgenv().TotalScans)
