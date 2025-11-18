@@ -1,0 +1,306 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "NyzingHubDesync"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = CoreGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 260, 0, 160)
+MainFrame.Position = UDim2.new(0.5, -130, 0.5, -80)
+MainFrame.BackgroundColor3 = Color3.fromRGB(10, 30, 15)
+MainFrame.BorderSizePixel = 0
+MainFrame.BackgroundTransparency = 0.05
+MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.Parent = MainFrame
+
+local MainGradient = Instance.new("UIGradient")
+MainGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(8, 25, 12)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 35, 18))
+})
+MainGradient.Rotation = 90
+MainGradient.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Thickness = 2
+MainStroke.Color = Color3.fromRGB(139, 69, 19)
+MainStroke.Transparency = 0.2
+MainStroke.Parent = MainFrame
+
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, -16, 0, 36)
+Header.Position = UDim2.new(0, 8, 0, 8)
+Header.BackgroundColor3 = Color3.fromRGB(15, 40, 20)
+Header.BorderSizePixel = 0
+Header.Parent = MainFrame
+
+local HeaderCorner = Instance.new("UICorner")
+HeaderCorner.CornerRadius = UDim.new(0, 8)
+HeaderCorner.Parent = Header
+
+local HeaderGradient = Instance.new("UIGradient")
+HeaderGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 50, 25)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 40, 20))
+})
+HeaderGradient.Rotation = 90
+HeaderGradient.Parent = Header
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 1, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "✨ Nyzing Hub"
+Title.TextColor3 = Color3.fromRGB(255, 255, 240)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 14
+Title.Parent = Header
+
+local Content = Instance.new("Frame")
+Content.Size = UDim2.new(1, -16, 1, -60)
+Content.Position = UDim2.new(0, 8, 0, 52)
+Content.BackgroundTransparency = 1
+Content.Parent = MainFrame
+
+local Button = Instance.new("TextButton")
+Button.Size = UDim2.new(1, 0, 1, 0)
+Button.BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+Button.Text = "🎄 Desync"
+Button.TextColor3 = Color3.fromRGB(255, 255, 240)
+Button.Font = Enum.Font.GothamBold
+Button.TextSize = 14
+Button.Parent = Content
+
+local ButtonCorner = Instance.new("UICorner")
+ButtonCorner.CornerRadius = UDim.new(0, 8)
+ButtonCorner.Parent = Button
+
+local ButtonGradient = Instance.new("UIGradient")
+ButtonGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(190, 0, 0)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 0, 0))
+})
+ButtonGradient.Rotation = 90
+ButtonGradient.Parent = Button
+
+local ButtonStroke = Instance.new("UIStroke")
+ButtonStroke.Color = Color3.fromRGB(255, 215, 0)
+ButtonStroke.Thickness = 1
+ButtonStroke.Transparency = 0.4
+ButtonStroke.Parent = Button
+
+Button.MouseEnter:Connect(function()
+    TweenService:Create(Button, TweenInfo.new(0.2), {
+        BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+    }):Play()
+    TweenService:Create(ButtonStroke, TweenInfo.new(0.2), {
+        Transparency = 0.2
+    }):Play()
+end)
+
+Button.MouseLeave:Connect(function()
+    TweenService:Create(Button, TweenInfo.new(0.2), {
+        BackgroundColor3 = Color3.fromRGB(170, 0, 0)
+    }):Play()
+    TweenService:Create(ButtonStroke, TweenInfo.new(0.2), {
+        Transparency = 0.4
+    }):Play()
+end)
+
+local dragging, dragInput, dragStart, startPos
+Button.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+Button.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+local function createFloatingOrnament(parent, position, size, color)
+    local Ornament = Instance.new("Frame")
+    Ornament.Size = size
+    Ornament.Position = position
+    Ornament.BackgroundColor3 = color
+    Ornament.BorderSizePixel = 0
+    Ornament.Parent = parent
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(1, 0)
+    Corner.Parent = Ornament
+    
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Color = Color3.fromRGB(255, 215, 0)
+    Stroke.Thickness = 1
+    Stroke.Parent = Ornament
+    
+    return Ornament
+end
+
+local ornaments = {}
+local ornamentPositions = {
+    {UDim2.new(0, -6, 0, 20), UDim2.new(0, 12, 0, 12)},
+    {UDim2.new(1, -8, 0, 30), UDim2.new(0, 10, 0, 10)},
+    {UDim2.new(0, -4, 1, -25), UDim2.new(0, 14, 0, 14)},
+    {UDim2.new(1, -10, 1, -20), UDim2.new(0, 16, 0, 16)}
+}
+
+local ornamentColors = {
+    Color3.fromRGB(255, 0, 0),
+    Color3.fromRGB(0, 255, 0),
+    Color3.fromRGB(255, 255, 0),
+    Color3.fromRGB(0, 0, 255)
+}
+
+for i, posData in ipairs(ornamentPositions) do
+    local ornament = createFloatingOrnament(MainFrame, posData[1], posData[2], ornamentColors[i])
+    table.insert(ornaments, ornament)
+end
+
+local time = 0
+RunService.Heartbeat:Connect(function(delta)
+    time = time + delta
+    for i, ornament in ipairs(ornaments) do
+        local offset = math.sin(time + i) * 2
+        local currentPos = ornamentPositions[i][1]
+        ornament.Position = UDim2.new(
+            currentPos.X.Scale,
+            currentPos.X.Offset + offset,
+            currentPos.Y.Scale,
+            currentPos.Y.Offset
+        )
+    end
+end)
+
+local FFlags = {
+    DisableDPIScale = true,
+    S2PhysicsSenderRate = 15000,
+    AngularVelociryLimit = 360,
+    StreamJobNOUVolumeCap = 2147483647,
+    GameNetDontSendRedundantDeltaPositionMillionth = 1,
+    TimestepArbiterOmegaThou = 1073741823,
+    MaxMissedWorldStepsRemembered = -2147483648,
+    GameNetPVHeaderRotationalVelocityZeroCutoffExponent = -5000,
+    PhysicsSenderMaxBandwidthBps = 20000,
+    LargeReplicatorSerializeWrite4 = true,
+    MaxAcceptableUpdateDelay = 1,
+    ServerMaxBandwith = 52,
+    InterpolationFrameRotVelocityThresholdMillionth = 5,
+    GameNetDontSendRedundantNumTimes = 1,
+    StreamJobNOUVolumeLengthCap = 2147483647,
+    CheckPVLinearVelocityIntegrateVsDeltaPositionThresholdPercent = 1,
+    TimestepArbiterHumanoidTurningVelThreshold = 1,
+    MaxTimestepMultiplierAcceleration = 2147483647,
+    SimOwnedNOUCountThresholdMillionth = 2147483647,
+    SimExplicitlyCappedTimestepMultiplier = 2147483646,
+    TimestepArbiterVelocityCriteriaThresholdTwoDt = 2147483646,
+    CheckPVCachedVelThresholdPercent = 10,
+    ReplicationFocusNouExtentsSizeCutoffForPauseStuds = 2147483647,
+    InterpolationFramePositionThresholdMillionth = 5,
+    DebugSendDistInSteps = -2147483648,
+    LargeReplicatorEnabled9 = true,
+    CheckPVDifferencesForInterpolationMinRotVelThresholdRadsPerSecHundredth = 1,
+    LargeReplicatorWrite5 = true,
+    NextGenReplicatorEnabledWrite4 = true,
+    MaxTimestepMultiplierContstraint = 2147483647,
+    MaxTimestepMultiplierBuoyancy = 2147483647,
+    MaxDataPacketPerSend = 2147483647,
+    LargeReplicatorRead5 = true,
+    CheckPVDifferencesForInterpolationMinVelThresholdStudsPerSecHundredth = 1,
+    TimestepArbiterHumanoidLinearVelThreshold = 1,
+    WorldStepMax = 30,
+    InterpolationFrameVelocityThresholdMillionth = 5,
+    LargeReplicatorSerializeRead3 = true,
+    GameNetPVHeaderLinearVelocityZeroCutoffExponent = -5000,
+    CheckPVCachedRotVelThresholdPercent = 10,
+}
+
+local function respawn(plr)
+    for name, value in pairs(FFlags) do
+        pcall(function()
+            setfflag(tostring(name), tostring(value))
+        end)
+    end
+end
+
+Button.MouseButton1Click:Connect(function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+
+    if root then
+        local backCFrame = root.CFrame * CFrame.new(0, 0, 50)
+        root.CFrame = backCFrame
+    end
+
+    task.wait(0.2)
+
+    respawn(LocalPlayer)
+
+    local Notify = Instance.new("Frame")
+    Notify.Size = UDim2.new(0, 200, 0, 40)
+    Notify.Position = UDim2.new(0, 20, 1, -60)
+    Notify.BackgroundColor3 = Color3.fromRGB(15, 40, 20)
+    Notify.BorderSizePixel = 0
+    Notify.BackgroundTransparency = 0.1
+    Notify.AnchorPoint = Vector2.new(0, 1)
+    Notify.Parent = ScreenGui
+
+    local NotifyCorner = Instance.new("UICorner")
+    NotifyCorner.CornerRadius = UDim.new(0, 8)
+    NotifyCorner.Parent = Notify
+
+    local NotifyGradient = Instance.new("UIGradient")
+    NotifyGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 50, 25)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 40, 20))
+    })
+    NotifyGradient.Rotation = 90
+    NotifyGradient.Parent = Notify
+
+    local NotifyStroke = Instance.new("UIStroke")
+    NotifyStroke.Color = Color3.fromRGB(255, 215, 0)
+    NotifyStroke.Thickness = 1
+    NotifyStroke.Parent = Notify
+
+    local NotifyText = Instance.new("TextLabel")
+    NotifyText.Size = UDim2.new(1, 0, 1, 0)
+    NotifyText.BackgroundTransparency = 1
+    NotifyText.Font = Enum.Font.GothamBold
+    NotifyText.TextColor3 = Color3.fromRGB(255, 255, 240)
+    NotifyText.TextSize = 14
+    NotifyText.Text = "🎅 Desync Activated!"
+    NotifyText.Parent = Notify
+
+    TweenService:Create(Notify, TweenInfo.new(0.3), {Position = UDim2.new(0, 20, 1, -75)}):Play()
+    task.wait(2)
+    TweenService:Create(Notify, TweenInfo.new(0.3), {BackgroundTransparency = 1, Position = UDim2.new(0, 20, 1, 0)}):Play()
+    task.wait(0.3)
+    Notify:Destroy()
+end)
